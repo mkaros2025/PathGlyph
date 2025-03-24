@@ -1,0 +1,16 @@
+[
+{
+  "directory": "/home/mkaros/projects/PathGlyph",
+  "arguments": ["/usr/bin/gcc", "-c", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++17", "-Isrc", "-Ithirdparty/glad/include", "-DNDEBUG", "-o", "build/.objs/PathGlyph/linux/x86_64/release/src/main.cpp.o", "src/main.cpp"],
+  "file": "src/main.cpp"
+},
+{
+  "directory": "/home/mkaros/projects/PathGlyph",
+  "arguments": ["/usr/bin/gcc", "-c", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++17", "-Isrc", "-Ithirdparty/glad/include", "-DNDEBUG", "-o", "build/.objs/PathGlyph/linux/x86_64/release/src/core/window.cpp.o", "src/core/window.cpp"],
+  "file": "src/core/window.cpp"
+},
+{
+  "directory": "/home/mkaros/projects/PathGlyph",
+  "arguments": ["/usr/bin/gcc", "-c", "-m64", "-fvisibility=hidden", "-O3", "-Isrc", "-Ithirdparty/glad/include", "-DNDEBUG", "-o", "build/.objs/PathGlyph/linux/x86_64/release/thirdparty/glad/src/glad.c.o", "thirdparty/glad/src/glad.c"],
+  "file": "thirdparty/glad/src/glad.c"
+}]
