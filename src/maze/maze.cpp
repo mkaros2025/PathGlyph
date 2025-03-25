@@ -258,8 +258,8 @@ bool Maze::hasReachedGoal() const {
     return current_.distanceTo(goal_) < GOAL_THRESHOLD;
 }
 
+// 检查每个障碍物是否与给定位置相交
 bool Maze::isObstacle(int x, int y) const {
-    // 检查每个障碍物是否与给定位置相交
     for (const auto& obstacle : obstacles_) {
         if (obstacle && obstacle->intersects(x, y)) { // 修复: 添加空指针检查
             return true;

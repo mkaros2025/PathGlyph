@@ -46,6 +46,7 @@ unsigned int Renderer::createEBO(const void* data, size_t size) {
   return ebo;
 }
 
+// 初始化一下
 bool Renderer::initialize() {
     // 加载着色器
     if (!loadShaders()) {
@@ -210,6 +211,7 @@ void Renderer::enableBlending(bool enable) {
         glDisable(GL_BLEND);
     }
 }
+
 void Renderer::updateMatrices() {
     // 创建正交投影矩阵
     // 计算视口的宽高比（aspect ratio）
@@ -236,7 +238,7 @@ void Renderer::updateMatrices() {
     // 偏移量由用户的平移操作（pan）控制
     viewMatrix_ = glm::translate(viewMatrix_, glm::vec3(config_.cameraOffset.x, config_.cameraOffset.y, 0.0f));
 
-    // 设置着色器的投影矩阵和视图矩阵
+    // 设置着色器的投影矩阵和视图矩阵，其实都是统一的
     // 如果迷宫着色器存在，设置其投影矩阵和视图矩阵
     if (mazeShader_) {
         mazeShader_->use(); // 激活迷宫着色器
@@ -259,6 +261,7 @@ void Renderer::updateMatrices() {
     }
 }
 
+// 更新迷宫的几何渲染
 void Renderer::updateMazeGeometry() {
     if (!maze_) return;
     
@@ -271,6 +274,7 @@ void Renderer::updateMazeGeometry() {
             // 确定图块类型
             Tile::Type tileType;
             
+            // 一共就俩类型，墙和地面，与障碍物相交就是墙，没相交就是地面
             if (maze_->isObstacle(x, y)) {
                 tileType = Tile::Type::Wall;
             } else {

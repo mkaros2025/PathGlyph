@@ -1,5 +1,7 @@
 #pragma once
 #include <functional>
+#include "core/gui/imgui_impl_glfw.h"
+#include "core/gui/imgui_impl_opengl3.h"
 
 // 前向声明GLFW类型避免头文件污染
 struct GLFWwindow;
@@ -61,6 +63,8 @@ public:
 
     // 关闭窗口
     void close();
+
+    void DrawPanel(); // 调试面板主入口
     
 private:
     // GLFW 窗口句柄，用于管理窗口资源
@@ -93,6 +97,11 @@ private:
     // - xpos: 鼠标的 x 坐标
     // - ypos: 鼠标的 y 坐标
     static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos);
+    
+
+    void DrawModeSwitch();
+    void DrawEditControls();
+    void DrawPathControls();
 };
 
 } // namespace PathGlyph

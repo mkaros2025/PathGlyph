@@ -5,44 +5,38 @@
 namespace PathGlyph {
 
 // 构造函数
-Tile::Tile(int x, int y, Type type) 
+Tile::Tile(int x, int y, TileType type) 
     : x_(x), y_(y), screenX_(0.0f), screenY_(0.0f) {
     // 初始化位域结构
     flags_.type = static_cast<unsigned int>(type);
-    flags_.walkable = (type != Type::Wall);  // 墙不可通行
-    flags_.highlighted = false;
-    flags_.reserved = 0;
+    flags_.walkable = (type != TileType::Wall);  // 墙不可通行
+    flags_.style = 0;
     
     // 计算等轴测坐标
     calculateIsoCoordinates();
 }
 
-// 设置图块类型
-void Tile::setType(Type type) {
-    flags_.type = static_cast<unsigned int>(type);
-    flags_.walkable = (type != Type::Wall);  // 更新通行性
-}
-
-// 设置高亮状态
-void Tile::setHighlighted(bool highlighted) {
-    flags_.highlighted = highlighted;
+// 等轴测转换：逻辑坐标→屏幕坐标
+glm::vec2 Tile::isoToScreen(float x, float y) {
+  return glm::vec2(
+      (x - y) * (TILE_WIDTH / 2.0f),
+      (x + y) * (TILE_HEIGHT / 2.0f)
+  );
 }
 
 // 计算等轴测坐标
 void Tile::calculateIsoCoordinates() {
-    // 等轴测投影：屏幕x = (逻辑x - 逻辑y) * TILE_WIDTH/2
-    //            屏幕y = (逻辑x + 逻辑y) * TILE_HEIGHT/2
-    glm::vec2 screenPos = isoToScreen(static_cast<float>(x_), static_cast<float>(y_));
-    screenX_ = screenPos.x;
-    screenY_ = screenPos.y;
+  // 等轴测投影：屏幕x = (逻辑x - 逻辑y) * TILE_WIDTH/2
+  //            屏幕y = (逻辑x + 逻辑y) * TILE_HEIGHT/2
+  glm::vec2 screenPos = isoToScreen(static_cast<float>(x_), static_cast<float>(y_));
+  screenX_ = screenPos.x;
+  screenY_ = screenPos.y;
 }
 
-// 等轴测转换：逻辑坐标→屏幕坐标
-glm::vec2 Tile::isoToScreen(float x, float y) {
-    return glm::vec2(
-        (x - y) * (TILE_WIDTH / 2.0f),
-        (x + y) * (TILE_HEIGHT / 2.0f)
-    );
+// 设置图块类型
+void Tile::setType(TileType type) {
+    flags_.type = static_cast<unsigned int>(type);
+    flags_.walkable = (type != TileType::Wall);  // 更新通行性
 }
 
 // 等轴测转换：屏幕坐标→逻辑坐标
@@ -60,28 +54,53 @@ glm::vec2 Tile::screenToIso(float x, float y) {
     return glm::vec2(logicX, logicY);
 }
 
+int Tile::getTextureIDForType(TileType type) const {
+  switch (type) {
+      case TileType::Wall:   return 1; // 墙的纹理ID
+      case TileType::Ground: return 2; // 地面的纹理ID
+      default:           return 0; // 默认纹理ID
+  }
+}
+
+glm::vec2 Tile::getTexCoordForVertex(size_t vertexIndex) const {
+  // 假设顶点的纹理坐标是基于顶点的顺序设置的
+  switch (vertexIndex) {
+      case 0: return glm::vec2(0.0f, 1.0f); // 左上
+      case 1: return glm::vec2(0.5f, 0.0f); // 顶部
+      case 2: return glm::vec2(1.0f, 1.0f); // 右上
+      case 3: return glm::vec2(0.5f, 1.0f); // 底部
+      case 4: return glm::vec2(0.0f, 0.0f); // 左下（侧面）
+      case 5: return glm::vec2(0.5f, 0.0f); // 顶部（侧面）
+      case 6: return glm::vec2(1.0f, 0.0f); // 右下（侧面）
+      case 7: return glm::vec2(0.5f, 1.0f); // 底部（侧面）
+      default: return glm::vec2(0.0f, 0.0f); // 默认值
+  }
+}
+
 // 获取图块的顶点数据
 void Tile::getVertices(std::array<Vertex, VERTICES_PER_TILE>& vertices) const {
-    // 初始化顶点数组
-    calculateVertexPositions(vertices);
-    
-    // 获取颜色
-    glm::vec3 color = getTypeColor(getType());
-    
-    // 如果高亮，调整颜色亮度
-    if (isHighlighted()) {
-        color *= 1.3f; // 提高亮度
-    }
-    
-    // 设置所有顶点的颜色
-    for (auto& vertex : vertices) {
-        vertex.color = color;
-        
-        // 侧面颜色稍微暗一些，创建深度感
-        if (vertex.position.z < 0.01f) {
-            vertex.color *= 0.7f;
-        }
-    }
+  // 初始化顶点数组，计算顶点位置
+  calculateVertexPositions(vertices);
+
+  // 获取纹理ID（假设每种类型对应一个固定的纹理ID）
+  int textureID = getTextureIDForType(getType());
+
+  // 为每个顶点设置属性
+  for (size_t i = 0; i < VERTICES_PER_TILE; ++i) {
+      Vertex& vertex = vertices[i];
+
+      // 设置纹理坐标
+      vertex.texCoord = getTexCoordForVertex(i);
+
+      // 设置法线（假设法线向上，对于水平面来说已经够了）
+      vertex.normal = glm::vec3(0.0f, 0.0f, 1.0f);
+
+      // 设置动画时间（假设为 0.0f，后续可以动态更新）
+      vertex.animationTime = 0.0f;
+
+      // 设置纹理ID
+      vertex.textureID = textureID;
+  }
 }
 
 // 计算顶点位置
@@ -91,7 +110,7 @@ void Tile::calculateVertexPositions(std::array<Vertex, VERTICES_PER_TILE>& verti
     float d = TILE_DEPTH;          // 深度
     
     // 判断是否为墙（需要高度）
-    bool isWall = (getType() == Type::Wall);
+    bool isWall = (getType() == TileType::Wall);
     float height = isWall ? d : 0.0f;
     
     // 基础位置 (等轴测投影的中心点)
@@ -118,7 +137,7 @@ void Tile::calculateVertexPositions(std::array<Vertex, VERTICES_PER_TILE>& verti
     }
 }
 
-// 获取图块的索引数据
+// 生成一个图块的索引数据，用于定义顶点之间的连接关系，从而告诉 GPU 如何绘制图块的几何形状
 void Tile::getIndices(std::array<unsigned int, INDICES_PER_TILE>& indices, unsigned int baseIndex) const {
     // 顶面两个三角形 (顺时针)
     indices[0] = baseIndex + 0;
@@ -130,7 +149,7 @@ void Tile::getIndices(std::array<unsigned int, INDICES_PER_TILE>& indices, unsig
     indices[5] = baseIndex + 3;
     
     // 侧面两个三角形 (仅用于墙)
-    if (getType() == Type::Wall) {
+    if (getType() == TileType::Wall) {
         // 前侧面
         indices[6] = baseIndex + 0;
         indices[7] = baseIndex + 4;
@@ -147,54 +166,57 @@ void Tile::getIndices(std::array<unsigned int, INDICES_PER_TILE>& indices, unsig
     }
 }
 
-// 获取图块类型对应的颜色
-glm::vec3 Tile::getTypeColor(Type type) {
-    switch (type) {
-        case Type::Wall:
-            return glm::vec3(0.5f, 0.5f, 0.5f);  // 灰色
-        case Type::Ground:
-            return glm::vec3(0.8f, 0.8f, 0.7f);  // 淡黄色
-        case Type::Path:
-            return glm::vec3(0.2f, 0.6f, 1.0f);  // 蓝色
-        case Type::Start:
-            return glm::vec3(0.0f, 0.8f, 0.0f);  // 绿色
-        case Type::Goal:
-            return glm::vec3(1.0f, 0.2f, 0.2f);  // 红色
-        default:
-            return glm::vec3(1.0f, 1.0f, 1.0f);  // 白色 (默认)
-    }
-}
-
 // TileBatch 实现
 // ---------------
 
-// TileBatch 实现
-// ---------------
-
-TileBatch::TileBatch() 
+TileBatch::TileBatch() // 初始 id 和数量都设置为 0
     : vao_(0), vbo_(0), ebo_(0), vertexCount_(0), indexCount_(0) {
-    // 创建顶点数组对象
+    // 成一个顶点数组对象（VAO），用于存储顶点属性的配置。
     glGenVertexArrays(1, &vao_);
+    // 顶点缓冲对象，用于存储顶点数据（如位置、颜色等）。
     glGenBuffers(1, &vbo_);
+    // 索引缓冲对象，用于存储索引数据（定义顶点的连接关系）。
     glGenBuffers(1, &ebo_);
     
-    // 设置顶点属性 - 这是关键的修复部分
+    // 绑定到 opengl 上下文可以理解为将一个指针指向了这个对象
+    // 绑定 VAO 到当前 opengl 上下文状态中，表示接下来的顶点属性配置将存储在这个 VAO 中。
     glBindVertexArray(vao_);
-    
-    // 绑定但不分配数据 - 数据将在 upload() 中分配
+    // 绑定 VBO 到当前 OpenGL 上下文的状态中，表示接下来的顶点数据操作将作用于这个缓冲对象。
     glBindBuffer(GL_ARRAY_BUFFER, vbo_);
-    
-    // 设置顶点位置属性 (位置 0)
+
+    // 该配置基于 当前绑定的 VBO
+    // 定义顶点属性数据格式
+    // 用于告诉 GPU 如何从顶点缓冲对象（VBO）中解析顶点数据
+    // 配置顶点属性：颜色 (location = 0)
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Tile::Vertex), 
-                         (void*)offsetof(Tile::Vertex, position));
+            (void*)offsetof(Tile::Vertex, position));
+    // OpenGL 默认禁用所有顶点属性。若未启用，顶点着色器中的 location=0 将无法接收数据，导致渲染错误（如黑屏或顶点位置错误）。
+    // 启用顶点属性位置 0，允许顶点着色器读取该属性数据
+    // 该启用状态会被当前绑定的 VAO 记录，后续渲染时只需绑定 VAO 即可恢复状态
     glEnableVertexAttribArray(0);
-    
-    // 设置顶点颜色属性 (位置 1)
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Tile::Vertex), 
-                         (void*)offsetof(Tile::Vertex, color));
+
+    // 配置顶点属性：纹理坐标 (location = 1)
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Tile::Vertex), 
+            (void*)offsetof(Tile::Vertex, texCoord));
     glEnableVertexAttribArray(1);
+
+    // 配置顶点属性：法线 (location = 2)
+    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Tile::Vertex), 
+            (void*)offsetof(Tile::Vertex, normal));
+    glEnableVertexAttribArray(2);
+
+    // 配置顶点属性：动画时间 (location = 3)
+    glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, sizeof(Tile::Vertex), 
+            (void*)offsetof(Tile::Vertex, animationTime));
+    glEnableVertexAttribArray(3);
+
+    // 配置顶点属性：纹理ID (location = 4)
+    glVertexAttribIPointer(4, 1, GL_INT, sizeof(Tile::Vertex), 
+            (void*)offsetof(Tile::Vertex, textureID));
+    glEnableVertexAttribArray(4);
     
-    // 绑定索引缓冲，数据将在 upload() 中分配
+    // 绑定 EBO，表示接下来的索引数据操作将作用于这个缓冲对象
+    // 索引数据将在 upload() 方法中上传到 GPU
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
     
     // 解绑 VAO，保持 EBO 绑定状态
@@ -212,16 +234,17 @@ TileBatch::~TileBatch() {
     if (ebo_ != 0) glDeleteBuffers(1, &ebo_);
 }
 
+// 来咯
 void TileBatch::addTile(const Tile& tile) {
-    // 获取顶点数据
+    // 创建顶点数据，存储单个图块的顶点数据
     std::array<Tile::Vertex, Tile::VERTICES_PER_TILE> vertices;
     tile.getVertices(vertices);
     
-    // 获取索引数据
+    // 创建索引数据，存储单个图块的索引数据
     std::array<unsigned int, Tile::INDICES_PER_TILE> indices;
     tile.getIndices(indices, vertexCount_);
     
-    // 添加到批次
+    // 添加到批次的末尾
     vertices_.insert(vertices_.end(), vertices.begin(), vertices.end());
     indices_.insert(indices_.end(), indices.begin(), indices.end());
     
@@ -231,11 +254,10 @@ void TileBatch::addTile(const Tile& tile) {
 }
 
 void TileBatch::clear() {
-    // 清空数据
-    vertices_.clear();
-    indices_.clear();
-    vertexCount_ = 0;
-    indexCount_ = 0;
+  vertices_.clear();  // 清空存储顶点数据的容器
+  indices_.clear();   // 清空存储索引数据的容器 （EBO）
+  vertexCount_ = 0;   // 重置顶点计数器
+  indexCount_ = 0;    // 重置索引计数器
 }
 
 // 新方法: 将顶点和索引数据上传到GPU
