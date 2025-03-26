@@ -13,6 +13,33 @@ enum class TileType : uint8_t {
   Ground = 1,  // 地面
 };
 
+// 新增：渲染元素类型
+enum class RenderElementType : uint8_t {
+  Tile = 0,      // 基础图块
+  Path = 1,      // 路径
+  Obstacle = 2,  // 障碍物
+  Agent = 3      // 代理（起点/终点/当前位置）
+};
+
+// 叠加层配置
+struct OverlayConfig {
+    glm::vec3 color{1.0f};     // 颜色
+    float height = 0.0f;       // 高度偏移
+    float glowIntensity = 0.0f; // 发光强度
+
+    // 预定义配置
+    static const OverlayConfig PATH;   // 路径
+    static const OverlayConfig START;  // 起点
+    static const OverlayConfig GOAL;   // 终点
+    static const OverlayConfig CURRENT;// 当前位置
+};
+
+// 预定义配置的实现
+inline const OverlayConfig OverlayConfig::PATH   = {glm::vec3(0.2f, 0.6f, 1.0f), 0.1f, 0.3f};
+inline const OverlayConfig OverlayConfig::START  = {glm::vec3(0.2f, 0.8f, 0.2f), 0.2f, 0.5f};
+inline const OverlayConfig OverlayConfig::GOAL   = {glm::vec3(0.8f, 0.8f, 0.2f), 0.2f, 0.5f};
+inline const OverlayConfig OverlayConfig::CURRENT = {glm::vec3(0.2f, 0.6f, 0.8f), 0.3f, 0.4f};
+
 // 等轴测图块渲染类
 class Tile {
  public:
@@ -26,13 +53,19 @@ class Tile {
     glm::vec3 normal;  // 法线
     // float animationTime; // 动画时间
     int textureID;  // 纹理ID
+    
+    // 为了支持颜色信息，添加颜色字段
+    glm::vec3 color{1.0f, 1.0f, 1.0f};  // 默认白色
+    
+    // 元素类型，用于着色器中区分不同类型的渲染
+    uint8_t elementType = static_cast<uint8_t>(RenderElementType::Tile);
   };
 
   // 渲染状态
   struct RenderState {
-    bool isOverlayActive = false;  // 是否启用叠加层
-    glm::vec3 overlayColor{1.0f};  // 叠加层颜色
-    float glowIntensity = 0.0f;    // 发光强度
+    bool hasOverlay = false;     // 是否启用叠加层
+    glm::vec3 overlayColor{1.0f}; // 叠加层颜色
+    float glowIntensity = 0.0f;  // 发光强度
     // float animationTime = 0.0f;       // 动画时间
     float overlayHeight = 0.0f;  // 叠加层高度偏移
   };
@@ -104,6 +137,13 @@ class Tile {
       std::array<Vertex, VERTICES_PER_TILE> &vertices) const;
 };
 
+// 通用顶点数据（用于路径、障碍物和代理）
+struct GenericVertex {
+  glm::vec3 position;  // 位置
+  glm::vec3 color;     // 颜色
+  uint8_t elementType; // 元素类型
+};
+
 // 批量渲染图块的辅助类
 class TileBatch {
  public:
@@ -113,14 +153,29 @@ class TileBatch {
 
   // 添加图块到批次
   void addTile(const Tile &tile);
+  
+  // 新增：添加路径段
+  void addPathSegment(const glm::vec3& start, const glm::vec3& end, const glm::vec3& color, float width = 5.0f, float height = 0.05f);
+  
+  // 新增：添加障碍物
+  void addObstacle(const glm::vec2& position, float radius, const glm::vec3& color, bool isDynamic = false);
+  
+  // 新增：添加代理（起点/终点/当前位置）
+  void addAgent(const glm::vec2& position, const glm::vec3& color, float size, float height);
 
   // 清空批次
   void clear();
   void upload();
+  
+  // 新增：渲染所有元素
+  void render(unsigned int shaderProgram);
 
   // 获取批次数据
   unsigned int getVAO() const { return vao_; }
   unsigned int getIndexCount() const { return indexCount_; }
+  
+  // 新增：获取顶点计数（用于不使用索引的绘制）
+  unsigned int getVertexCount() const { return vertexCount_; }
 
  private:
   unsigned int vao_ = 0;          // 顶点数组对象，初始化为0
@@ -128,12 +183,21 @@ class TileBatch {
   unsigned int ebo_ = 0;          // 索引缓冲对象，初始化为0
   unsigned int vertexCount_ = 0;  // 批次中的顶点数量，初始化为0
   unsigned int indexCount_ = 0;   // 批次中的索引数量，初始化为0
+  
+  // 元素类型计数
+  unsigned int tileVertexCount_ = 0;    // 图块顶点数量
+  unsigned int pathVertexCount_ = 0;    // 路径顶点数量
+  unsigned int obstacleVertexCount_ = 0; // 障碍物顶点数量
+  unsigned int agentVertexCount_ = 0;   // 代理顶点数量
 
   // 存储整个批次的数据的全局容器
   // 在 TileBatch::upload 函数中，vertices_ 中的数据会被上传到 GPU
   // 的顶点缓冲对象（VBO）中，用于渲染
   std::vector<Tile::Vertex> vertices_;  // 顶点数据
   std::vector<unsigned int> indices_;   // 索引数据
+  
+  // 辅助函数：将GenericVertex转换为Tile::Vertex
+  Tile::Vertex convertToTileVertex(const GenericVertex& genericVertex);
 };
 
 }  // namespace PathGlyph

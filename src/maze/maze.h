@@ -1,26 +1,12 @@
 #pragma once
 #include "obstacle.h"
+#include "../common/Point.h"
 #include <vector>
 #include <queue>
 #include <memory>
 #include <string>
 
 namespace PathGlyph {
-
-// 简单坐标结构
-struct Point {
-    int x;
-    int y;
-    
-    Point() : x(0), y(0) {}
-    Point(int x_, int y_) : x(x_), y(y_) {}
-    
-    double distanceTo(const Point& other) const {
-        double dx = x - other.x;
-        double dy = y - other.y;
-        return std::sqrt(dx*dx + dy*dy);
-    }
-};
 
 // A*路径规划节点
 struct AStarNode {
@@ -40,8 +26,7 @@ struct AStarNode {
 
 class Maze {
 public:
-    Maze(); // 默认构造函数
-    // Maze(int width, int height);
+    Maze(int width = 50, int height = 50);
     ~Maze();
     
     // 从JSON文件加载地图配置
@@ -51,19 +36,22 @@ public:
     void setStart(int x, int y);
     void setGoal(int x, int y);
     
-    // 障碍物管理 - 简化为统一接口
-    template<typename... Args>
-    void addObstacle(Args&&... args) {
-        obstacles_.push_back(std::make_shared<Obstacle>(std::forward<Args>(args)...));
-    }
-
+    // 清除起点或终点
+    void clearStart() { start_ = Point(-1, -1); }
+    void clearGoal() { goal_ = Point(-1, -1); }
+    
+    // 障碍物管理
+    void addObstacle(int x, int y);
+    void addObstacle(double x, double y, double radius = 1.0); // 静态障碍物
+    void addObstacle(double centerX, double centerY, double orbitRadius, double speed, double startAngle = 0.0); // 动态障碍物
+    void removeObstacle(int x, int y);
     void clearObstacles();
     
     // A*路径规划
-    bool findPathAStar();
+    std::vector<Point> findPathAStar();
     
-    // 动态窗口法（DWA）
-    bool planDWA(double& resultVx, double& resultVy, double maxSpeed = 2.0);
+    // 清除路径
+    void clearPath() { path_.clear(); }
     
     // 更新动态障碍物和当前位置
     void update(double dt);
@@ -72,8 +60,11 @@ public:
     int getWidth() const { return width_; }
     int getHeight() const { return height_; }
     bool isPathFound() const { return !path_.empty(); }
+    bool hasValidPath() const { return isPathFound(); }
     bool hasReachedGoal() const;
     bool isObstacle(int x, int y) const;
+    bool isStartPoint(int x, int y) const { return start_.x == x && start_.y == y; }
+    bool isEndPoint(int x, int y) const { return goal_.x == x && goal_.y == y; }
     
     // 获取状态信息（用于渲染）
     const Point& getStart() const { return start_; }
@@ -90,9 +81,6 @@ private:
     // A*辅助函数
     double heuristic(int x1, int y1, int x2, int y2) const;
     void reconstructPath(AStarNode* node);
-    
-    // DWA辅助函数
-    double evaluateDWA(double vx, double vy, double dt);
     
     int width_;
     int height_;

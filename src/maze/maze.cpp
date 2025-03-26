@@ -9,14 +9,10 @@ using json = nlohmann::json;
 
 namespace PathGlyph {
 
-Maze::Maze() // 初始化默认值
-  : width_(10), height_(10), start_{0, 0}, goal_{9, 9}, current_{0, 0} {
+Maze::Maze(int width, int height)
+    : width_(width), height_(height), 
+      start_(0, 0), goal_(width-1, height-1), current_(0, 0) {
 }
-
-// Maze::Maze(int width, int height)
-//     : width_(width), height_(height), 
-//       start_(0, 0), goal_(width-1, height-1), current_(0, 0) {
-// }
 
 Maze::~Maze() {
     // 智能指针会自动处理内存清理
@@ -108,7 +104,8 @@ void Maze::clearObstacles() {
     path_.clear(); // 清除现有路径
 }
 
-bool Maze::findPathAStar() {
+// 路径搜索
+std::vector<Point> Maze::findPathAStar() {
     // 清除现有路径
     path_.clear();
     
@@ -176,78 +173,31 @@ bool Maze::findPathAStar() {
         delete node;
     }
     
-    return pathFound;
-}
-
-bool Maze::planDWA(double& resultVx, double& resultVy, double maxSpeed) {
-    if (path_.empty()) {
-        return false;  // 没有路径可以跟随
-    }
-    
-    // 设置DWA参数
-    const double dt = 0.1;  // 预测时间步长
-    const int numSamples = 10;  // 速度采样数
-    
-    double bestScore = -std::numeric_limits<double>::max();
-    resultVx = 0.0;
-    resultVy = 0.0;
-    
-    // 均匀采样速度空间
-    std::vector<double> vxSamples(numSamples);
-    std::vector<double> vySamples(numSamples);
-    
-    for (int i = 0; i < numSamples; i++) {
-        double angle = 2.0 * M_PI * i / numSamples;
-        vxSamples[i] = maxSpeed * std::cos(angle);
-        vySamples[i] = maxSpeed * std::sin(angle);
-    }
-    
-    // 评估每个速度样本
-    for (int i = 0; i < numSamples; i++) {
-        double vx = vxSamples[i];
-        double vy = vySamples[i];
-        
-        // 预测位置
-        double predX = current_.x + vx * dt;
-        double predY = current_.y + vy * dt;
-        
-        // 修复: 使用适当的类型转换并保证边界检查
-        int predXInt = static_cast<int>(predX);
-        int predYInt = static_cast<int>(predY);
-        
-        // 如果预测位置无效或不安全，跳过该样本
-        if (!isValid(predXInt, predYInt) || !isSafe(predXInt, predYInt)) {
-            continue;
-        }
-        
-        // 计算得分
-        double score = evaluateDWA(vx, vy, dt);
-        
-        if (score > bestScore) {
-            bestScore = score;
-            resultVx = vx;
-            resultVy = vy;
-        }
-    }
-    
-    return bestScore > -std::numeric_limits<double>::max();
+    return path_; // 返回生成的路径
 }
 
 void Maze::update(double dt) {
     // 更新所有动态障碍物
     for (auto& obstacle : obstacles_) {
-        if (obstacle) { // 修复: 添加空指针检查
+        if (obstacle && obstacle->isDynamic()) {
             obstacle->update(dt);
         }
     }
     
-    // 如果有有效路径和速度，更新当前位置
+    // 如果路径发生碰撞，需要重新规划
     if (!path_.empty()) {
-        double vx, vy;
-        if (planDWA(vx, vy)) {
-            // 更新位置（连续空间）
-            current_.x += vx * dt;
-            current_.y += vy * dt;
+        // 检查路径是否仍然有效
+        bool pathValid = true;
+        for (const auto& point : path_) {
+            if (isObstacle(point.x, point.y)) {
+                pathValid = false;
+                break;
+            }
+        }
+        
+        // 如果路径无效，重新规划
+        if (!pathValid) {
+            findPathAStar();
         }
     }
 }
@@ -297,55 +247,43 @@ void Maze::reconstructPath(AStarNode* node) {
     std::reverse(path_.begin(), path_.end());
 }
 
-double Maze::evaluateDWA(double vx, double vy, double dt) {
-    // 预测下一位置
-    double nextX = current_.x + vx * dt;
-    double nextY = current_.y + vy * dt;
-    
-    // 避障得分 - 距离障碍物越远越好
-    double obstacleScore = std::numeric_limits<double>::max();
-    for (const auto& obstacle : obstacles_) {
-        if (!obstacle) continue; // 修复: 添加空指针检查
-        
-        // 修复: 利用友元关系直接访问障碍物属性
-        RealPoint nextPos(nextX, nextY);
-        double distance = nextPos.distanceTo(obstacle->position_) - obstacle->radius_;
-        obstacleScore = std::min(obstacleScore, distance);
+// 添加障碍物
+void Maze::addObstacle(int x, int y) {
+    if (isValid(x, y)) {
+        obstacles_.push_back(std::make_shared<Obstacle>(x, y));
+        path_.clear(); // 清除现有路径
     }
+}
+
+// 添加静态障碍物
+void Maze::addObstacle(double x, double y, double radius) {
+    obstacles_.push_back(std::make_shared<Obstacle>(x, y, radius));
+    path_.clear(); // 清除现有路径
+}
+
+// 添加动态障碍物
+void Maze::addObstacle(double centerX, double centerY, double orbitRadius, double speed, double startAngle) {
+    obstacles_.push_back(std::make_shared<Obstacle>(centerX, centerY, orbitRadius, speed, startAngle));
+    path_.clear(); // 清除现有路径
+}
+
+// 移除障碍物
+void Maze::removeObstacle(int x, int y) {
+    if (!isValid(x, y)) return;
     
-    // 修复: 确保避障得分不为零
-    obstacleScore = std::max(obstacleScore, 0.001);
+    // 创建一个临时向量存储需要保留的障碍物
+    std::vector<std::shared_ptr<Obstacle>> remainingObstacles;
     
-    // 路径跟随得分 - 先找出路径中下一个目标点
-    double pathScore = std::numeric_limits<double>::max();
-    size_t nextPointIndex = 0;
-    
-    // 找出当前位置在路径中的位置
-    for (size_t i = 0; i < path_.size(); i++) {
-        double distToCurrent = std::sqrt(std::pow(current_.x - path_[i].x, 2) + 
-                                        std::pow(current_.y - path_[i].y, 2));
-        if (distToCurrent < 1.0) { // 在某点附近
-            nextPointIndex = std::min(i + 1, path_.size() - 1);
-            break;
+    // 遍历所有障碍物
+    for (const auto& obstacle : obstacles_) {
+        // 如果障碍物不在给定位置，则保留
+        if (!obstacle->intersects(x, y)) {
+            remainingObstacles.push_back(obstacle);
         }
     }
     
-    // 计算到下一个路径点的距离
-    if (nextPointIndex < path_.size()) {
-        pathScore = std::sqrt(std::pow(nextX - path_[nextPointIndex].x, 2) + 
-                             std::pow(nextY - path_[nextPointIndex].y, 2));
-    }
-    
-    // 修复: 确保路径得分不为零
-    pathScore = std::max(pathScore, 0.001);
-    double pathScoreNormalized = 1.0 / pathScore;
-    
-    // 目标导向得分 - 考虑到目标的距离和方向
-    double goalDistance = std::sqrt(std::pow(nextX - goal_.x, 2) + std::pow(nextY - goal_.y, 2));
-    double goalScore = 1.0 / (goalDistance + 0.001);  // 距离目标越近，得分越高
-    
-    // 权重组合
-    return (10.0 / obstacleScore) + (2.0 * pathScoreNormalized) + (1.0 * goalScore);
+    // 更新障碍物列表
+    obstacles_ = std::move(remainingObstacles);
 }
 
 } // namespace PathGlyph

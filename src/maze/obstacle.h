@@ -1,27 +1,11 @@
 #pragma once
-#include <cmath>
+#include "../common/Point.h"
 #include <memory>
 
 namespace PathGlyph {
 
 // 前向声明
 class Maze;
-
-// 连续坐标点
-struct RealPoint {
-    double x;
-    double y;
-    
-    RealPoint() : x(0.0), y(0.0) {}
-    RealPoint(double x_, double y_) : x(x_), y(y_) {}
-    
-    // 简化的距离计算
-    double distanceTo(const RealPoint& other) const {
-        double dx = x - other.x;
-        double dy = y - other.y;
-        return std::sqrt(dx*dx + dy*dy);
-    }
-};
 
 // 统一的障碍物类（可以是静态或动态的）
 class Obstacle {
