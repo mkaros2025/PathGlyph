@@ -6,13 +6,14 @@
 #include <functional>
 #include <GLFW/glfw3.h>
 
-#include "common/Types.h"
+#include "common/types.h"
+#include "core/simulation.h"
 
 namespace PathGlyph {
 
 class ImGuiWindow {
 public:
-    ImGuiWindow(GLFWwindow* window, std::shared_ptr<EditState> state);
+    ImGuiWindow(GLFWwindow* window, std::shared_ptr<EditState> state, std::shared_ptr<Simulation> simulation);
     ~ImGuiWindow();
 
     // 初始化 ImGui
@@ -32,6 +33,7 @@ private:
     GLFWwindow* window_;
     float sidePanelWidth_ = 250.0f;  // 侧边栏宽度
     std::shared_ptr<EditState> currentState_;  // 当前编辑状态
+    std::shared_ptr<Simulation> simulation_;
 };
 
 } // namespace PathGlyph 

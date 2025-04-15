@@ -6,7 +6,7 @@
 #include <thread>
 #include <vector>
 
-#include "core/Application.h"
+#include "core/application.h"
 
 using namespace PathGlyph;
 

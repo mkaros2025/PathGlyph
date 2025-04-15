@@ -4,16 +4,6 @@
   "start": [2, 2],
   "goal": [12, 12],
   "static_obstacles": [
-      {"x": 5, "y": 5, "radius": 1.0}
-  ],
-  "dynamic_obstacles": [
-      {
-        "x": 9, 
-        "y": 7, 
-        "movement_type": "circular", 
-        "center": [7, 7], 
-        "radius": 2, 
-        "angular_speed": 0.5
-      }
+      {"x": 5, "y": 5}
   ]
 }

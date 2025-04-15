@@ -54,9 +54,8 @@ bool Maze::loadFromJson(const std::string& filename) {
             for (const auto& obs : data["static_obstacles"]) {
                 double x = obs["x"];
                 double y = obs["y"];
-                double radius = obs.contains("radius") ? static_cast<double>(obs["radius"]) : 1.0;
-                
-                addObstacle(x, y, radius);
+                Point position(x, y);
+                addStaticObstacle(position);
             }
         }
         
@@ -65,84 +64,64 @@ bool Maze::loadFromJson(const std::string& filename) {
             for (const auto& obs : data["dynamic_obstacles"]) {
                 double x = obs["x"];
                 double y = obs["y"];
+                Point position(x, y);
                 MovementType moveType = obs["movement_type"].get<std::string>() == "linear" ? 
                                       MovementType::LINEAR : MovementType::CIRCULAR;
                 
-                ObstacleProperties props;
-                props.movementType = moveType;
-                
                 if (moveType == MovementType::LINEAR) {
-                    props.speed = obs["speed"];
-                    props.direction = Vector2D(obs["direction"][0], obs["direction"][1]);
+                    float speed = obs["speed"];
+                    glm::vec2 direction(obs["direction"][0], obs["direction"][1]);
+                    addDynamicObstacle(position, speed, direction);
                 } else {
-                    props.center = Point(obs["center"][0], obs["center"][1]);
-                    props.radius = obs["radius"];
-                    props.angularSpeed = obs["angular_speed"];
+                    Point center(obs["center"][0], obs["center"][1]);
+                    float radius = obs["radius"];
+                    float angularSpeed = obs["angular_speed"];
+                    addDynamicObstacle(position, center, radius, angularSpeed);
                 }
-                
-                addDynamicObstacle(x, y, moveType, props);
             }
         }
-        
-        // 尝试找到路径
-        path_.clear();
-        findPathAStar();
-        
         return true;
     } catch (const std::exception& e) {
-        // 处理JSON解析错误
         std::cerr << "JSON parsing error: " << e.what() << std::endl;
         return false;
     }
 }
 
-void Maze::setStart(int x, int y) {
-    if (isValid(x, y) && !isObstacle(x, y)) {
-        start_ = Point(x, y);
+void Maze::setStart(const Point& position) {
+    if (isInBounds(position) && !isStaticObstacle(position) && !isDynamicObstacle(position)) {
+        start_ = position;
         current_ = start_; // 重置当前位置
         path_.clear(); // 清除现有路径
     }
 }
 
-void Maze::setGoal(int x, int y) {
-    if (isValid(x, y) && !isObstacle(x, y)) {
-        goal_ = Point(x, y);
+void Maze::setGoal(const Point& position) {
+    if (isInBounds(position) && !isStaticObstacle(position) && !isDynamicObstacle(position)) {
+        goal_ = position;
         path_.clear(); // 清除现有路径
     }
 }
 
 void Maze::setPath(const std::vector<Point>& path) {
     path_ = path;
-    updateWorldPath();
 }
 
-void Maze::clearObstacles() {
-    obstacles_.clear();
-    dynamicObstacles_.clear();
-    obstacleProperties_.clear();
-    path_.clear(); // 清除现有路径
+void Maze::clearStaticObstacles() {
+    staticObstacles_.clear();
 }
 
 void Maze::clearDynamicObstacles() {
     dynamicObstacles_.clear();
-    // 清理障碍物属性中关联到动态障碍物的条目
-    for (auto it = obstacleProperties_.begin(); it != obstacleProperties_.end();) {
-        if (it->first->isDynamic()) {
-            it = obstacleProperties_.erase(it);
-        } else {
-            ++it;
-        }
-    }
 }
 
-void Maze::resetObstacles() {
-    // 重置所有动态障碍物到初始位置
+void Maze::reset() {
     for (auto& obstacle : dynamicObstacles_) {
         obstacle->reset();
     }
+    current_ = start_;
 }
 
-// 路径搜索
+// 路径搜索 - 使用网格坐标系统进行规划
 std::vector<Point> Maze::findPathAStar() {
     // 清除现有路径
     path_.clear();
@@ -151,31 +130,44 @@ std::vector<Point> Maze::findPathAStar() {
     const int dx[] = {-1, -1, 0, 1, 1, 1, 0, -1};
     const int dy[] = {0, 1, 1, 1, 0, -1, -1, -1};
     
-    // 创建优先队列
-    std::priority_queue<AStarNode*, std::vector<AStarNode*>, std::greater<AStarNode*>> openSet;
+    // 重新定义比较函数，用于std::shared_ptr的比较
+    auto compare = [](const std::shared_ptr<AStarNode>& a, const std::shared_ptr<AStarNode>& b) {
+        return a->f > b->f;
+    };
+    
+    // 创建优先队列，全部使用智能指针
+    std::priority_queue<std::shared_ptr<AStarNode>, 
+                         std::vector<std::shared_ptr<AStarNode>>, 
+                         decltype(compare)> openSet(compare);
     
     // 创建访问标记数组
     std::vector<std::vector<bool>> visited(width_, std::vector<bool>(height_, false));
     
     // 创建起始节点
-    AStarNode* startNode = new AStarNode(start_.x, start_.y, 0, heuristic(start_.x, start_.y, goal_.x, goal_.y));
-    openSet.push(startNode);
+    int startX = static_cast<int>(current_.x);
+    int startY = static_cast<int>(current_.y);
+    int goalX = static_cast<int>(goal_.x);
+    int goalY = static_cast<int>(goal_.y);
     
-    // 跟踪所有创建的节点以便清理内存
-    std::vector<AStarNode*> allNodes;
-    allNodes.push_back(startNode);
+    auto startNode = std::make_shared<AStarNode>(
+        startX, startY, 
+        0, 
+        heuristic(startX, startY, goalX, goalY),
+        nullptr // 起始节点没有父节点
+    );
+    openSet.push(startNode);
     
     bool pathFound = false;
     
     // A*主循环
     while (!openSet.empty()) {
         // 获取代价最小的节点
-        AStarNode* current = openSet.top();
+        auto current = openSet.top();
         openSet.pop();
         
         // 检查是否到达目标
-        if (current->x == goal_.x && current->y == goal_.y) {
-            reconstructPath(current);
+        if (current->x == goalX && current->y == goalY) {
+            reconstructPath(current);  // 使用智能指针
             pathFound = true;
             break;
         }
@@ -193,11 +185,10 @@ std::vector<Point> Maze::findPathAStar() {
                 // 计算移动代价（对角线移动代价为1.414，垂直/水平移动代价为1.0）
                 double moveCost = (i % 2 == 0) ? 1.0 : 1.414;
                 double newG = current->g + moveCost;
-                double newH = heuristic(newX, newY, goal_.x, goal_.y);
+                double newH = heuristic(newX, newY, goalX, goalY);
                 
-                // 创建新节点
-                AStarNode* neighbor = new AStarNode(newX, newY, newG, newH, current);
-                allNodes.push_back(neighbor);
+                // 创建新节点，直接使用智能指针
+                auto neighbor = std::make_shared<AStarNode>(newX, newY, newG, newH, current);
                 
                 // 添加到开集
                 openSet.push(neighbor);
@@ -206,32 +197,201 @@ std::vector<Point> Maze::findPathAStar() {
         }
     }
     
-    // 更新世界坐标路径
-    if (pathFound) {
-        updateWorldPath();
-    }
-    
-    // 清理内存
-    for (auto node : allNodes) {
-        delete node;
-    }
-    
     return path_; // 返回生成的路径
 }
 
+// 更新动态障碍物
+void Maze::update(float deltaTime) {
+    for (auto& obstacle : dynamicObstacles_) {
+        obstacle->update(deltaTime);
+    }
+}
+
+// 判断位置是否有静态障碍物
+bool Maze::isStaticObstacle(const Point& position) const {
+    // 检查所有静态障碍物
+    for (const auto& obstacle : staticObstacles_) {
+        if (position.distanceTo(obstacle->getGridPosition()) < 0.5) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// 判断位置是否有动态障碍物
+bool Maze::isDynamicObstacle(const Point& position) const {
+    // 检查所有动态障碍物
+    for (const auto& obstacle : dynamicObstacles_) {
+        if (position.distanceTo(obstacle->getGridPosition()) < 0.5) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// 检查是否到达目标
+bool Maze::hasReachedGoal() const {
+    return current_.distanceTo(goal_) < 0.5;
+}
+
+// 碰撞检测 - 检查点是否与任何障碍物碰撞
+bool Maze::checkCollision(const Point& pos, float radius) const {
+    // 检查是否与静态障碍物碰撞
+    for (const auto& obstacle : staticObstacles_) {
+        if (obstacle->intersects(pos, radius)) {
+            return true;
+        }
+    }
+    
+    // 检查是否与动态障碍物碰撞
+    for (const auto& obstacle : dynamicObstacles_) {
+        if (obstacle->intersects(pos, radius)) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// 判断位置是否在地图范围内
+bool Maze::isValid(int x, int y) const {
+    // 整数坐标表示网格中心
+    return x >= 0 && x < width_ && y >= 0 && y < height_;
+}
+
+// 判断位置是否安全（无障碍物）
+bool Maze::isSafe(int x, int y) const {
+    // 整数坐标表示网格中心，直接作为Point使用
+    return !isStaticObstacle(Point(x, y));
+}
+
+// 启发式函数 
+double Maze::heuristic(int x1, int y1, int x2, int y2) const {
+     return std::sqrt((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2));
+}
+
+// 从A*节点重建路径
+void Maze::reconstructPath(std::shared_ptr<AStarNode> node) {
+    // 清除现有路径
+    path_.clear();
+    
+    // 从目标节点回溯到起始节点
+    while (node != nullptr) {
+        // 转换网格坐标为逻辑坐标（网格中心）
+        Point logicalPos = Point(node->x, node->y) ;
+        path_.insert(path_.begin(), logicalPos);
+        node = node->parent;
+    }
+}
+
+// 添加静态障碍物
+void Maze::addStaticObstacle(const Point& position) {
+    if (!isInBounds(position) || isStaticObstacle(position) || isDynamicObstacle(position)) {
+        return;
+    }
+    
+    // 创建新的静态障碍物
+    auto obstacle = std::make_shared<StaticObstacle>(position, width_, height_);
+    staticObstacles_.push_back(obstacle);
+    
+    // 清除现有路径（因为可能被新障碍物阻断）
+    path_.clear();
+}
+
+// 添加线性运动的动态障碍物
+void Maze::addDynamicObstacle(const Point& position, float speed, glm::vec2 direction) {
+    // 检查是否已存在障碍物
+    if (isStaticObstacle(position) || isDynamicObstacle(position)) {
+        return; // 位置已占用
+    }
+    
+    // 检查位置是否有效
+    if (!isInBounds(position)) {
+        return; // 位置超出边界
+    }
+    
+    // 创建新的动态障碍物(线性运动)
+    auto obstacle = std::make_shared<DynamicObstacle>(position, speed, direction, width_, height_);
+    dynamicObstacles_.push_back(obstacle);
+    
+    // 清除现有路径（因为可能被新障碍物阻断）
+    path_.clear();
+}
+
+// 添加圆周运动的动态障碍物
+void Maze::addDynamicObstacle(const Point& position, Point center, float radius, float angularSpeed) {
+    // 检查是否已存在障碍物
+    if (isStaticObstacle(position) || isDynamicObstacle(position)) {
+        return; // 位置已占用
+    }
+    
+    // 检查位置是否有效
+    if (!isInBounds(position)) {
+        return; // 位置超出边界
+    }
+    
+    // 创建新的动态障碍物(圆周运动)
+    auto obstacle = std::make_shared<DynamicObstacle>(position, center, radius, angularSpeed, width_, height_);
+    dynamicObstacles_.push_back(obstacle);
+    
+    // 清除现有路径（因为可能被新障碍物阻断）
+    path_.clear();
+}
+
+// 移除障碍物
+void Maze::removeObstacle(const Point& position, double tolerance) {
+    // 移除静态障碍物
+    for (auto it = staticObstacles_.begin(); it != staticObstacles_.end();) {
+        Point obstaclePos = (*it)->getLogicalPosition();
+        float dx = position.x - obstaclePos.x;
+        float dy = position.y - obstaclePos.y;
+        float distSq = dx * dx + dy * dy;
+        
+        if (distSq <= tolerance * tolerance) {
+            it = staticObstacles_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    
+    // 移除动态障碍物
+    for (auto it = dynamicObstacles_.begin(); it != dynamicObstacles_.end();) {
+        Point obstaclePos = (*it)->getLogicalPosition();
+        float dx = position.x - obstaclePos.x;
+        float dy = position.y - obstaclePos.y;
+        float distSq = dx * dx + dy * dy;
+        
+        if (distSq <= tolerance * tolerance) {
+            it = dynamicObstacles_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    
+    // 清除现有路径（因为可能需要重新计算）
+    path_.clear();
+}
+
+// 世界坐标转逻辑坐标
+Point Maze::worldToLogical(const glm::vec3& worldPos) const {
+    return Point(worldPos.x, worldPos.z);
+}
+
 // DWA局部规划
-Vector2D Maze::findBestLocalVelocity(const Point& currentPos, const Vector2D& currentVel, 
+glm::vec2 Maze::findBestLocalVelocity(const Point& currentPos, const glm::vec2& currentVel, 
                                     const Point& targetPos, float maxSpeed, float maxRotSpeed) {
     // 生成速度空间采样
     const int VELOCITY_SAMPLES = 20;  // 速度采样数量
     const float PREDICTION_TIME = 2.0f; // 轨迹预测时间(秒)
     
-    std::vector<Vector2D> velocitySamples;
+    std::vector<glm::vec2> velocitySamples;
     generateVelocitySamples(currentVel, maxSpeed, maxRotSpeed, VELOCITY_SAMPLES, velocitySamples);
     
     // 找到最佳速度
     float bestScore = -std::numeric_limits<float>::max();
-    Vector2D bestVelocity = currentVel;
+    glm::vec2 bestVelocity = currentVel;
     
     for (const auto& velocity : velocitySamples) {
         float score = evaluateTrajectory(velocity, currentPos, targetPos, PREDICTION_TIME);
@@ -245,347 +405,166 @@ Vector2D Maze::findBestLocalVelocity(const Point& currentPos, const Vector2D& cu
     return bestVelocity;
 }
 
-void Maze::generateVelocitySamples(const Vector2D& currentVel, float maxSpeed, float maxRotSpeed, 
-                                 int samples, std::vector<Vector2D>& velocitySamples) {
-    // 使用随机数生成器创建均匀分布的速度样本
+// 生成速度采样
+void Maze::generateVelocitySamples(const glm::vec2& currentVel, float maxSpeed, float maxRotSpeed, 
+                                 int samples, std::vector<glm::vec2>& velocitySamples) {
+    // 使用随机数生成器来采样速度空间
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> speedDist(0.0f, maxSpeed);
-    std::uniform_real_distribution<float> angleDist(-maxRotSpeed, maxRotSpeed);
+    std::uniform_real_distribution<> speedDist(0, maxSpeed);
+    std::uniform_real_distribution<> angleDist(-maxRotSpeed, maxRotSpeed);
     
-    // 清空样本列表
+    // 清空速度样本容器
     velocitySamples.clear();
     
-    // 始终包含当前速度
+    // 添加当前速度
     velocitySamples.push_back(currentVel);
     
-    // 生成样本
+    // 计算当前速度的角度
+    float currentAngle = atan2(currentVel.y, currentVel.x);
+    float currentSpeed = glm::length(currentVel);
+    
+    // 生成速度样本
     for (int i = 0; i < samples; ++i) {
-        // 生成随机速度大小
-        float speed = speedDist(gen);
+        // 随机调整当前速度和方向
+        float speedAdjustment = speedDist(gen);
+        float angleAdjustment = angleDist(gen);
         
-        // 计算当前速度方向
-        float currentAngle = 0.0f;
-        if (currentVel.length() > 0.001f) {
-            currentAngle = atan2(currentVel.y, currentVel.x);
-        }
+        // 计算新速度和角度
+        float speed = std::min(currentSpeed + speedAdjustment, maxSpeed);
+        speed = std::max(0.1f, speed); // 确保速度不会太小
+        float newAngle = currentAngle + angleAdjustment;
         
-        // 生成随机角度变化
-        float angleChange = angleDist(gen);
-        float newAngle = currentAngle + angleChange;
-        
-        // 创建新速度向量
-        Vector2D newVel(speed * cos(newAngle), speed * sin(newAngle));
+        // 创建新的速度向量
+        glm::vec2 newVel(speed * cos(newAngle), speed * sin(newAngle));
         velocitySamples.push_back(newVel);
     }
 }
 
-float Maze::evaluateTrajectory(const Vector2D& velocity, const Point& currentPos, 
+// 评估轨迹得分
+float Maze::evaluateTrajectory(const glm::vec2& velocity, const Point& currentPos, 
                              const Point& targetPos, float predictTime) {
-    // 预测轨迹
-    std::vector<Point> trajectory;
-    const int STEPS = 10;  // 预测步数
-    const float dt = predictTime / STEPS;
+    // 距离目标的接近程度、避障能力、与目标方向的一致性
     
+    // 1. 模拟轨迹，计算终点位置
     float x = currentPos.x;
     float y = currentPos.y;
     
-    for (int i = 0; i < STEPS; ++i) {
-        x += velocity.x * dt;
-        y += velocity.y * dt;
+    // 简单欧拉积分计算终点
+    x += velocity.x * predictTime;
+    y += velocity.y * predictTime;
+    
+    Point endPos(x, y);
+    
+    // 边界检查 - 如果终点超出边界，给予极低的评分
+    if (!isInBounds(endPos)) {
+        return -2000; // 比障碍物碰撞更低的分数
+    }
+    
+    // 收集轨迹上的点（用于检查碰撞）
+    std::vector<Point> trajectory;
+    const int steps = 10; // 轨迹分段数
+    
+    for (int i = 0; i <= steps; ++i) {
+        float t = static_cast<float>(i) / steps * predictTime;
+        float px = currentPos.x + velocity.x * t;
+        float py = currentPos.y + velocity.y * t;
+        Point predictedPos(px, py);
         
-        Point predictedPos(static_cast<int>(x), static_cast<int>(y));
+        // 对轨迹上的每个点也进行边界检查
+        if (!isInBounds(predictedPos)) {
+            return -2000;
+        }
+        
         trajectory.push_back(predictedPos);
-        
-        // 如果轨迹中有碰撞，则提前结束
-        if (!isInBounds(predictedPos) || checkCollision(predictedPos)) {
-            break;
-        }
     }
     
-    // 计算轨迹得分
+    // 2. 计算各种得分
     float obstacleScore = calculateObstacleAvoidanceScore(trajectory);
-    float goalDirectionScore = calculateGoalDirectionScore(velocity, currentPos, targetPos);
-    float goalDistanceScore = calculateGoalDistanceScore(trajectory.empty() ? currentPos : trajectory.back(), targetPos);
+    float directionScore = calculateGoalDirectionScore(velocity, currentPos, targetPos);
+    float distanceScore = calculateGoalDistanceScore(endPos, targetPos);
     
-    // 组合得分（权重可以根据需要调整）
-    float totalScore = 0.5f * obstacleScore + 0.3f * goalDirectionScore + 0.2f * goalDistanceScore;
+    // 如果轨迹会导致碰撞，给予极低的评分
+    if (obstacleScore < 0) {
+        return -1000;
+    }
     
-    return totalScore;
+    // 3. 综合评分（权重可调整）
+    float finalScore = obstacleScore * 0.4f + directionScore * 0.3f + distanceScore * 0.3f;
+    
+    return finalScore;
 }
 
+// 计算轨迹的避障得分
 float Maze::calculateObstacleAvoidanceScore(const std::vector<Point>& trajectory) {
-    if (trajectory.empty()) {
-        return 0.0f;  // 空轨迹，无法评估
-    }
-    
-    // 初始得分为最大值
-    float score = 1.0f;
-    
-    // 检查轨迹中是否有碰撞
+    // 判断轨迹上的点是否与当前障碍物碰撞
     for (const auto& point : trajectory) {
-        if (!isInBounds(point)) {
-            // 轨迹超出边界，大幅度降低分数
-            return 0.1f;
-        }
-        
         if (checkCollision(point)) {
-            // 轨迹与障碍物碰撞，大幅度降低分数
-            return 0.1f;
-        }
-        
-        // 检查距离障碍物的最近距离
-        float minDistance = std::numeric_limits<float>::max();
-        
-        // 检查与静态障碍物的距离
-        for (const auto& obstacle : obstacles_) {
-            Point obsPos = obstacle->getGridPosition();
-            float distance = point.distanceTo(obsPos);
-            minDistance = std::min(minDistance, static_cast<float>(distance));
-        }
-        
-        // 检查与动态障碍物的距离
-        for (const auto& obstacle : dynamicObstacles_) {
-            Point obsPos = obstacle->getGridPosition();
-            float distance = point.distanceTo(obsPos);
-            minDistance = std::min(minDistance, static_cast<float>(distance));
-        }
-        
-        // 如果非常接近障碍物，降低得分
-        if (minDistance < 2.0f) {
-            score = std::min(score, minDistance / 2.0f);
+            return -1000; // 如果发生碰撞，给予极低的得分
         }
     }
     
-    return score;
-}
-
-float Maze::calculateGoalDirectionScore(const Vector2D& velocity, const Point& currentPos, 
-                                       const Point& targetPos) {
-    if (velocity.length() < 0.001f) {
-        return 0.5f;  // 速度太小，中等分数
-    }
-    
-    // 计算朝向目标的方向向量
-    Vector2D toGoal(targetPos.x - currentPos.x, targetPos.y - currentPos.y);
-    if (toGoal.length() < 0.001f) {
-        return 1.0f;  // 已经在目标位置，最高分数
-    }
-    
-    // 归一化方向向量
-    Vector2D normalizedVelocity = velocity.normalize();
-    Vector2D normalizedToGoal = toGoal.normalize();
-    
-    // 计算两个方向的点积（cos值）
-    float cos = normalizedVelocity.dot(normalizedToGoal);
-    
-    // 将cos映射到0-1的得分范围（cos的范围为-1到1）
-    return (cos + 1.0f) / 2.0f;
-}
-
-float Maze::calculateGoalDistanceScore(const Point& endPos, const Point& targetPos) {
-    // 计算到目标的距离
-    float distance = static_cast<float>(endPos.distanceTo(targetPos));
-    
-    // 距离越近，得分越高
-    // 使用指数衰减函数将距离映射到0-1的分数范围
-    return exp(-distance / 10.0f);  // 参数10控制衰减速率
-}
-
-void Maze::update(float deltaTime) {
-    // 更新所有动态障碍物
-    for (auto& obstacle : dynamicObstacles_) {
-        obstacle->update(deltaTime);
-    }
-}
-
-std::vector<std::shared_ptr<Obstacle>> Maze::getNearbyObstacles(const Point& center, float radius) const {
-    std::vector<std::shared_ptr<Obstacle>> nearby;
+    // 计算最小距离
+    float minDistance = std::numeric_limits<float>::max();
+    const Point& endPoint = trajectory.back();
     
     // 检查静态障碍物
-    for (const auto& obstacle : obstacles_) {
-        Point obsPos = obstacle->getGridPosition();
-        if (center.distanceTo(obsPos) <= radius) {
-            nearby.push_back(obstacle);
-        }
+    for (const auto& obstacle : staticObstacles_) {
+        Point obstaclePos = obstacle->getLogicalPosition();
+        float dx = endPoint.x - obstaclePos.x;
+        float dy = endPoint.y - obstaclePos.y;
+        float distSq = dx * dx + dy * dy;
+        minDistance = std::min(minDistance, static_cast<float>(sqrt(distSq)));
     }
     
-    // 检查动态障碍物
+    // 检查动态障碍物的未来位置
+    const float PREDICTION_TIME = 2.0f; // 同evaluateTrajectory中的预测时间保持一致
+    
     for (const auto& obstacle : dynamicObstacles_) {
-        Point obsPos = obstacle->getGridPosition();
-        if (center.distanceTo(obsPos) <= radius) {
-            nearby.push_back(obstacle);
-        }
-    }
-    
-    return nearby;
-}
-
-bool Maze::hasReachedGoal() const {
-    return current_.x == goal_.x && current_.y == goal_.y;
-}
-
-bool Maze::isObstacle(int x, int y) const {
-    // 检查是否有静态障碍物
-    for (const auto& obstacle : obstacles_) {
-        if (obstacle->intersects(x, y)) {
-            return true;
-        }
-    }
-    
-    // 检查是否有动态障碍物
-    for (const auto& obstacle : dynamicObstacles_) {
-        if (obstacle->intersects(x, y)) {
-            return true;
-        }
-    }
-    
-    return false;
-}
-
-bool Maze::isDynamicObstacle(int x, int y) const {
-    // 检查是否有动态障碍物
-    for (const auto& obstacle : dynamicObstacles_) {
-        if (obstacle->intersects(x, y)) {
-            return true;
-        }
-    }
-    
-    return false;
-}
-
-bool Maze::checkCollision(const Point& pos, float radius) const {
-    // 检查与静态障碍物的碰撞
-    for (const auto& obstacle : obstacles_) {
-        if (obstacle->intersects(pos, radius)) {
-            return true;
-        }
-    }
-    
-    // 检查与动态障碍物的碰撞
-    for (const auto& obstacle : dynamicObstacles_) {
-        if (obstacle->intersects(pos, radius)) {
-            return true;
-        }
-    }
-    
-    return false;
-}
-
-bool Maze::isValid(int x, int y) const {
-    return x >= 0 && x < width_ && y >= 0 && y < height_;
-}
-
-bool Maze::isSafe(int x, int y) const {
-    return !isObstacle(x, y);
-}
-
-double Maze::heuristic(int x1, int y1, int x2, int y2) const {
-    // 使用欧几里得距离作为启发式
-    double dx = x1 - x2;
-    double dy = y1 - y2;
-    return std::sqrt(dx * dx + dy * dy);
-}
-
-void Maze::reconstructPath(AStarNode* node) {
-    // 清除现有路径
-    path_.clear();
-    
-    // 从目标节点回溯到起始节点，构建路径
-    while (node) {
-        path_.insert(path_.begin(), Point(node->x, node->y));
-        node = node->parent;
-    }
-    
-    // 更新世界坐标路径
-    updateWorldPath();
-}
-
-void Maze::updateWorldPath() {
-    worldPath_.clear();
-    
-    for (const auto& point : path_) {
-        worldPath_.push_back(logicalToWorld(point));
-    }
-}
-
-void Maze::addObstacle(int x, int y) {
-    if (isValid(x, y) && !isObstacle(x, y)) {
-        // 转换为世界坐标，网格坐标位于网格中心
-        double worldX = x;
-        double worldY = y;
+        // 获取障碍物在未来时间的预测位置
+        glm::vec3 futurePos = obstacle->getPredictedPosition(PREDICTION_TIME);
+        Point futurePosPoint(futurePos.x, futurePos.z);
         
-        auto obstacle = std::make_shared<Obstacle>(worldX, worldY);
-        obstacles_.push_back(obstacle);
-    }
-}
-
-void Maze::addObstacle(double x, double y, double radius) {
-    auto obstacle = std::make_shared<Obstacle>(x, y, radius);
-    obstacles_.push_back(obstacle);
-}
-
-void Maze::addDynamicObstacle(int x, int y, MovementType type, const ObstacleProperties& props) {
-    // 创建动态障碍物
-    auto obstacle = std::make_shared<Obstacle>(x, y, type);
-    
-    // 根据类型设置运动参数
-    if (type == MovementType::LINEAR) {
-        obstacle->setLinearMovement(props.speed, props.direction);
-    } else if (type == MovementType::CIRCULAR) {
-        obstacle->setCircularMovement(props.center, props.radius, props.angularSpeed);
+        float dx = endPoint.x - futurePosPoint.x;
+        float dy = endPoint.y - futurePosPoint.y;
+        float distSq = dx * dx + dy * dy;
+        minDistance = std::min(minDistance, static_cast<float>(sqrt(distSq)));
     }
     
-    // 存储障碍物属性用于重置
-    obstacleProperties_[obstacle] = props;
-    
-    // 添加到动态障碍物列表
-    dynamicObstacles_.push_back(obstacle);
+    return minDistance;
 }
 
-std::vector<Point> Maze::getDynamicObstaclePositions() const {
-    std::vector<Point> positions;
-    for (const auto& obstacle : dynamicObstacles_) {
-        positions.push_back(obstacle->getGridPosition());
+// 计算轨迹的方向得分
+float Maze::calculateGoalDirectionScore(const glm::vec2& velocity, const Point& currentPos, 
+                                      const Point& targetPos) {
+    // 计算到目标的方向向量
+    glm::vec2 toGoal(targetPos.x - currentPos.x, targetPos.y - currentPos.y);
+    float goalDist = glm::length(toGoal);
+    
+    if (goalDist < 0.001f) {
+        return 1.0f; // 已经非常接近目标
     }
-    return positions;
+    
+    // 归一化向量
+    toGoal = glm::normalize(toGoal);
+    glm::vec2 normVelocity = glm::normalize(velocity);
+    
+    // 计算方向相似度（点积）
+    float dotProduct = glm::dot(toGoal, normVelocity);
+    
+    // 转换为[0,1]范围的得分
+    return (dotProduct + 1.0f) / 2.0f;
 }
 
-std::vector<ObstacleProperties> Maze::getDynamicObstacleProperties() const {
-    std::vector<ObstacleProperties> properties;
-    for (const auto& obstacle : dynamicObstacles_) {
-        auto it = obstacleProperties_.find(obstacle);
-        if (it != obstacleProperties_.end()) {
-            properties.push_back(it->second);
-        }
-    }
-    return properties;
-}
-
-void Maze::removeObstacle(int x, int y) {
-    // 移除指定位置的障碍物
-    obstacles_.erase(
-        std::remove_if(obstacles_.begin(), obstacles_.end(),
-            [x, y](const std::shared_ptr<Obstacle>& obstacle) {
-                return obstacle->intersects(x, y);
-            }),
-        obstacles_.end()
-    );
+// 计算轨迹的距离得分
+float Maze::calculateGoalDistanceScore(const Point& endPos, const Point& targetPos) {
+    // 计算轨迹终点到目标的距离
+    float dx = endPos.x - targetPos.x;
+    float dy = endPos.y - targetPos.y;
+    float distance = sqrt(dx * dx + dy * dy);
     
-    // 移除指定位置的动态障碍物
-    auto it = std::remove_if(dynamicObstacles_.begin(), dynamicObstacles_.end(),
-        [x, y, this](const std::shared_ptr<Obstacle>& obstacle) {
-            // 如果障碍物与指定位置相交
-            if (obstacle->intersects(x, y)) {
-                // 从属性映射中也移除
-                obstacleProperties_.erase(obstacle);
-                return true;
-            }
-            return false;
-        });
-    
-    // 执行移除
-    dynamicObstacles_.erase(it, dynamicObstacles_.end());
+    // 使用指数衰减函数计算得分，距离越近得分越高
+    return exp(-distance / 10.0f); // 调整常数以控制衰减速率
 }
 
 } // namespace PathGlyph

@@ -1,4 +1,4 @@
-#include "core/Application.h"
+#include "core/application.h"
 #include <iostream>
 #include <imgui.h>
 #include <stdexcept>
@@ -6,8 +6,6 @@
 #include <thread>
 #include <cmath>
 #include <unistd.h> // 用于getcwd
-
-#include "../common/Types.h"
 
 namespace PathGlyph {
 
@@ -25,12 +23,6 @@ Application::Application(int width, int height, const char* title)
     // 创建编辑状态
     m_editState = std::make_shared<EditState>();
     
-    // 创建UI窗口，传入编辑状态
-    m_uiWindow = std::make_shared<ImGuiWindow>(m_window, m_editState);
-    if (!m_uiWindow->initialize()) {
-        throw std::runtime_error("Failed to initialize ImGui");
-    }
-    
     // 创建迷宫 - 从JSON文件加载
     m_maze = std::make_shared<Maze>();
     
@@ -40,12 +32,22 @@ Application::Application(int width, int height, const char* title)
         throw std::runtime_error("Failed to load mazefile from " + MazeFile);
     }
     
+    // 创建仿真系统
+    m_simulation = std::make_shared<Simulation>(m_maze, m_editState);
+    
+    // 创建UI窗口，传入编辑状态和仿真系统
+    m_uiWindow = std::make_shared<ImGuiWindow>(m_window, m_editState, m_simulation);
+    if (!m_uiWindow->initialize()) {
+        throw std::runtime_error("Failed to initialize ImGui");
+    }
+    
     // 创建渲染器
     m_renderer = std::make_unique<Renderer>(m_window, m_maze, m_editState);
     
     // 设置回调
     setupCallbacks();
     
+
     std::cout << "Application initialized successfully." << std::endl;
 }
 
@@ -68,6 +70,8 @@ bool Application::initWindow() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+    glfwWindowHint(GLFW_SAMPLES, 4); 
     
     // 创建窗口
     m_window = glfwCreateWindow(m_windowWidth, m_windowHeight, "PathGlyph", nullptr, nullptr);
@@ -237,10 +241,10 @@ void Application::handleMouseClick(double x, double y) {
     }
     
     // 将屏幕坐标转换为网格坐标
-    Point gridPos = screenToGrid(static_cast<int>(x), static_cast<int>(y));
+    Point gridPos = screenToGrid(x, y);
     
-    // 检查坐标是否有效
-    if (!m_maze->isInBounds(gridPos.x, gridPos.y)) {
+    // 检查坐标是否有效 - 使用网格坐标检查边界
+    if (!m_maze->isInBounds(gridPos)) {
         std::cout << "invalid coordinate" << std::endl;
         return;
     }
@@ -250,45 +254,37 @@ void Application::handleMouseClick(double x, double y) {
     switch (type) {
         case EditObjectType::START_POINT:
             // 如果网格上已有起点，先清除
-            if (m_maze->isStartPoint(gridPos.x, gridPos.y)) {
+            if (m_maze->isStartPoint(gridPos)) {
                 m_maze->clearStart();
             } else {
-                m_maze->setStart(gridPos.x, gridPos.y);
+                m_maze->setStart(gridPos);
             }
             break;
             
         case EditObjectType::END_POINT:
             // 如果网格上已有终点，先清除
-            if (m_maze->isEndPoint(gridPos.x, gridPos.y)) {
+            if (m_maze->isEndPoint(gridPos)) {
                 m_maze->clearGoal();
             } else {
-                m_maze->setGoal(gridPos.x, gridPos.y);
+                m_maze->setGoal(gridPos);
             }
             break;
             
         case EditObjectType::OBSTACLE:
             if (m_editState->obstacleAction == 0) {  // 添加
                 if (m_editState->obstacleType == 0) {  // 静态
-                    m_maze->addObstacle(gridPos.x, gridPos.y);
+                    m_maze->addStaticObstacle(gridPos);
                 } else {  // 动态
-                    // 创建动态障碍物的属性
-                    ObstacleProperties props;
+                    // 创建动态障碍物
                     if (m_editState->motionType == 0) {  // 线性运动
-                        props.movementType = MovementType::LINEAR;
-                        props.speed = 3.0f;
-                        props.direction = Vector2D(1.0f, 0.0f);  // 默认向右移动
+                        m_maze->addDynamicObstacle(gridPos, 3.0f, glm::vec2(1.0f, 0.0f));
                     } else {  // 圆周运动
-                        props.movementType = MovementType::CIRCULAR;
-                        props.center = gridPos;
-                        props.radius = 5.0f;
-                        props.angularSpeed = 1.0f;
+                        Point center = gridPos;  // 默认中心点与当前点相同
+                        m_maze->addDynamicObstacle(gridPos, center, 5.0f, 1.0f);
                     }
-                    m_maze->addDynamicObstacle(gridPos.x, gridPos.y, 
-                                              static_cast<MovementType>(m_editState->motionType), 
-                                              props);
                 }
             } else {  // 删除
-                m_maze->removeObstacle(gridPos.x, gridPos.y);
+                m_maze->removeObstacle(gridPos);
             }
             break;
     }
@@ -297,162 +293,32 @@ void Application::handleMouseClick(double x, double y) {
     m_renderer->markGeometryForUpdate();
 }
 
-void Application::ResetState() {
-    // 停止仿真
-    if (m_editState->simState == SimulationState::RUNNING) {
-        m_editState->simState = SimulationState::FINISHED;
-        std::cout << "Simulation stopped" << std::endl;
-    }
-    
-    // 清除路径和轨迹
-    m_maze->clearPath();
-    m_traversedPath.clear();
-    
-    // 重置仿真状态
-    m_editState->simState = SimulationState::IDLE;
-    
-    // 标记几何数据需要更新
-    m_renderer->markGeometryForUpdate();
-    
-    std::cout << "Path cleared" << std::endl;
-}
-
-void Application::startSimulation() {
-    const Point& start = m_maze->getStart();
-    const Point& goal = m_maze->getGoal();
-    
-    if (!m_maze->isInBounds(start.x, start.y) || !m_maze->isInBounds(goal.x, goal.y)) {
-        std::cout << "Invalid start or goal point, cannot start simulation" << std::endl;
-        return;
-    }
-    // 重置仿真状态
-    m_editState->simState = SimulationState::IDLE;
-    m_simulationTime = 0.0f;
-    m_editState->simulationTime = 0.0f;  // 确保EditState中的时间也被重置
-    
-    m_maze->clearPath();
-    m_traversedPath.clear();
-    
-    // 确保Agent起始位置正确设置
-    m_editState->currentAgentPosition = m_maze->getStart();
-    m_agentVelocity = Vector2D(0.0f, 0.0f);
-    
-    // 重置障碍物到初始位置
-    m_maze->resetObstacles();
-    
-    std::cout << "Simulation state reset" << std::endl;
-    
-    // 设置状态为运行
-    m_editState->simState = SimulationState::RUNNING;
-    std::cout << "Simulation started: from (" << m_maze->getStart().x << "," << m_maze->getStart().y 
-              << ") to (" << m_maze->getGoal().x << "," << m_maze->getGoal().y << ")" << std::endl;
-}
-
-// 更新仿真
-void Application::updateSimulation(float deltaTime) {
-    if (m_editState->simState != SimulationState::RUNNING) {
-        return;
-    }
-    
-    // 更新仿真时间
-    m_simulationTime += deltaTime;
-    m_editState->simulationTime = m_simulationTime;  // 同步时间到EditState
-    
-    // 更新动态障碍物
-    m_maze->update(deltaTime);
-    
-    // 更新Agent位置
-    updateAgentPosition(deltaTime);
-
-    // 标记几何体需要更新 - 确保动态障碍物和Agent的位置变化能被渲染出来
-    m_renderer->markGeometryForUpdate();
-
-    const Point& currentPos = m_editState->currentAgentPosition;
-    const Point& goal = m_maze->getGoal();
-    double distance = currentPos.distanceTo(goal);
-    
-    // 如果到达终点，结束仿真
-    if (distance < 0.5) {
-        // 设置仿真状态为已完成
-        m_editState->simState = SimulationState::FINISHED;
-        
-        // 将Agent走过的路径设置为最终路径
-        m_maze->setPath(m_traversedPath);
-        
-        // 确保路径显示选项开启
-        m_editState->showPath = true;
-        
-        // 标记几何数据需要更新
-        m_renderer->markGeometryForUpdate();
-        
-        std::cout << "Agent reached goal, simulation complete" << std::endl;
-        std::cout << "Total time: " << m_simulationTime << " seconds" << std::endl;
-    }
-}
-
-// 更新Agent位置
-void Application::updateAgentPosition(float deltaTime) {
-    // 获取当前位置和目标位置
-    Point& currentPos = m_editState->currentAgentPosition;
-    const Point& goal = m_maze->getGoal();
-    
-    // 计算最佳速度
-    Vector2D bestVelocity = m_maze->findBestLocalVelocity(
-                                currentPos, 
-                                m_agentVelocity, 
-                                goal,
-                                m_editState->maxSpeed,
-                                m_editState->maxRotationSpeed
-                            );
-    
-    // 更新速度（可以考虑平滑过渡）
-    m_agentVelocity = bestVelocity;
-    
-    // 计算新位置
-    double newX = currentPos.x + m_agentVelocity.x * deltaTime;
-    double newY = currentPos.y + m_agentVelocity.y * deltaTime;
-    
-    // 更新位置
-    Point newPos(static_cast<int>(newX), static_cast<int>(newY));
-    
-    // 检查新位置是否有效
-    if (m_maze->isInBounds(newPos) && !m_maze->checkCollision(newPos)) {
-        // 记录之前的位置
-        Point oldPos = currentPos;
-        
-        // 更新位置
-        currentPos = newPos;
-        
-        // 如果位置有变化，记录到轨迹中
-        if (!(oldPos == newPos)) {
-            const Point& currentPos = m_editState->currentAgentPosition;
-    
-            // 如果轨迹为空或者当前位置与最后一个点不同，则添加到轨迹中
-            if (m_traversedPath.empty() || !(m_traversedPath.back() == currentPos)) {
-                m_traversedPath.push_back(currentPos);
-            }
-        }
-    } else {
-        // 如果新位置无效，尝试调整
-        // 这里简单处理：保持原位置，更改方向
-        m_agentVelocity = Vector2D(-m_agentVelocity.x, -m_agentVelocity.y);
-    }
-    
-    // 更新迷宫中的当前位置
-    m_maze->setCurrentPosition(currentPos);
-}
-
 // 屏幕坐标到网格坐标
-Point Application::screenToGrid(int screenX, int screenY) {
+Point Application::screenToGrid(double screenX, double screenY) {
     int gridX, gridY;
     glm::vec2 screenPos(screenX, screenY);
     
     // 使用渲染器的3D投影方法进行坐标转换
-    if (m_renderer->screenToTileCoordinate(screenPos, gridX, gridY)) {
-        return Point(gridX, gridY);
+    // 获取当前的视图投影矩阵
+    if (m_editState) {
+        // 从渲染器获取视图投影矩阵
+        glm::mat4 viewProj = m_renderer->getViewProjectionMatrix();
+        
+        // 判断是否点击在UI区域外
+        if (screenX < m_sidePanelWidth) {
+            std::cout << "点击在UI区域内，不处理" << std::endl;
+            return Point(-1, -1);
+        }
+        
+        // 向TileManager传递视图投影矩阵和屏幕坐标
+        if (m_renderer->getTileManager()->screenToTileCoordinate(screenPos, gridX, gridY, viewProj)) {
+            std::cout << "成功转换为网格坐标: " << gridX << ", " << gridY << std::endl;
+            return Point(gridX, gridY);
+        }
     }
     
     // 如果转换失败，返回无效坐标
+    std::cout << "无法转换为有效网格坐标" << std::endl;
     return Point(-1, -1);
 }
 
@@ -480,18 +346,20 @@ void Application::run() {
         m_uiWindow->beginFrame(); // 开始ImGui帧
         m_uiWindow->drawControlPanel(); // 绘制控制面板
         
-
         if (m_editState->shouldStartSimulation) {
             m_editState->shouldStartSimulation = false;
-            startSimulation();
+            m_simulation->start();
         }
         if (m_editState->shouldResetState) {
             m_editState->shouldResetState = false;
-            ResetState();
-        }
+            m_simulation->reset();
+        }    
         
-        // 更新仿真
-        updateSimulation(deltaTime);
+        // 标记几何体需要更新 - 确保动态障碍物和Agent的位置变化能被渲染出来
+        if (m_simulation->isRunning()) {
+            m_simulation->update(deltaTime);
+            m_renderer->markGeometryForUpdate();
+        }
         
         // 清屏
         glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
@@ -506,5 +374,4 @@ void Application::run() {
         glfwSwapBuffers(m_window);
     }
 }
-
 }

@@ -5,8 +5,8 @@
 
 namespace PathGlyph {
 
-ImGuiWindow::ImGuiWindow(GLFWwindow* window, std::shared_ptr<EditState> state)
-    : window_(window), currentState_(state) {
+ImGuiWindow::ImGuiWindow(GLFWwindow* window, std::shared_ptr<EditState> state, std::shared_ptr<Simulation> simulation)
+    : window_(window), currentState_(state), simulation_(simulation) {
     std::cout << "ImGuiWindow created." << std::endl;
 }
 
@@ -49,24 +49,19 @@ void ImGuiWindow::endFrame() {
 
 void ImGuiWindow::handleInput() {
     ImGuiIO& io = ImGui::GetIO();
-    
-    // 处理鼠标按钮状态
+    // 处理鼠标按钮
     io.MouseDown[0] = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
-    io.MouseDown[1] = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
-    io.MouseDown[2] = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
     
     // 获取鼠标位置
     double mouseX, mouseY;
     glfwGetCursorPos(window_, &mouseX, &mouseY);
     io.MousePos = ImVec2(static_cast<float>(mouseX), static_cast<float>(mouseY));
     
-    // 处理键盘修饰键状态
-    io.KeyCtrl = glfwGetKey(window_, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS || 
-                 glfwGetKey(window_, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
-    io.KeyShift = glfwGetKey(window_, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS || 
-                  glfwGetKey(window_, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
-    io.KeyAlt = glfwGetKey(window_, GLFW_KEY_LEFT_ALT) == GLFW_PRESS || 
-                glfwGetKey(window_, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
+    // 设置 ImGui 是否捕获鼠标
+    // 如果鼠标位于 ImGui 窗口内，则由 ImGui 处理输入
+    // if (mouseX < sidePanelWidth_) {
+    //     io.WantCaptureMouse = true;
+    // }
 }
 
 void ImGuiWindow::drawControlPanel() {
@@ -76,7 +71,7 @@ void ImGuiWindow::drawControlPanel() {
     ImGui::Begin("Controls", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
     
     // 编辑模式选择
-    if (ImGui::RadioButton("View", currentState_->mode == EditMode::VIEW)) {
+    if (ImGui::RadioButton("View", currentState_->mode == EditMode::VIEW || currentState_->mode == EditMode::SIMULATION)) {
         currentState_->mode = EditMode::VIEW;
     }
     ImGui::SameLine();
@@ -86,8 +81,7 @@ void ImGuiWindow::drawControlPanel() {
     
     ImGui::Separator();
     
-    if (currentState_->mode == EditMode::VIEW) {
-        // 视图模式下的控制选项
+    if (currentState_->mode == EditMode::VIEW || currentState_->mode == EditMode::SIMULATION) {
         if (ImGui::CollapsingHeader("Render Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Checkbox("Show Wireframe", &currentState_->showWireframe);
             ImGui::Checkbox("Show Path", &currentState_->showPath);
@@ -105,20 +99,17 @@ void ImGuiWindow::drawControlPanel() {
             currentState_->shouldResetState = true;
         }
         
-        
         // 显示当前仿真状态
         const char* stateText = "Idle";
-        if (currentState_->simState == SimulationState::RUNNING) {
+        if (simulation_->isRunning()) {
             stateText = "Running";
-        } else if (currentState_->simState == SimulationState::FINISHED) {
+        } else if (simulation_->isFinished()) {
             stateText = "Finished";
         }
         ImGui::Text("Simulation State: %s", stateText);
         
         // 如果仿真正在运行或已完成，显示仿真时间
-        if (currentState_->simState != SimulationState::IDLE) {
-            ImGui::Text("Simulation Time: %.2f s", currentState_->simulationTime);
-        }
+        ImGui::Text("Simulation Time: %.2f s", simulation_->getSimulationTime());
     } else {
         // 编辑模式下的控制选项
         ImGui::Text("Edit Type:");

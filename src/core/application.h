@@ -5,12 +5,13 @@
 #include <string>
 #include <vector>
 #include <array>
-#include "common/Types.h"
+#include "common/types.h"
 #include "maze/maze.h"
-#include "renderer/renderer.h"
+#include "graphics/renderer.h"
 #include "ui/ImGuiWindow.h"
 #include "gui/imgui_impl_glfw.h"
 #include "gui/imgui_impl_opengl3.h"
+#include "core/simulation.h"
 
 namespace PathGlyph {
 
@@ -29,6 +30,7 @@ private:
     std::unique_ptr<Renderer> m_renderer;      // 渲染器
     std::shared_ptr<ImGuiWindow> m_uiWindow;   // UI窗口
     std::shared_ptr<EditState> m_editState;    // 编辑状态
+    std::shared_ptr<Simulation> m_simulation;  // 仿真系统
     
     // ===== 窗口相关 =====
     GLFWwindow* m_window = nullptr;
@@ -48,12 +50,6 @@ private:
     double m_currentMouseY = 0.0;  // 当前鼠标Y坐标
     double m_leftMouseDownTime = 0.0; // 左键按下的时间
     
-    // ===== 仿真状态 =====
-    Vector2D m_agentVelocity;      // Agent当前速度
-    std::vector<Point> m_traversedPath; // Agent走过的路径
-    float m_simulationTime = 0.0f; // 仿真计时器
-    float m_agentSpeed = 5.0f;     // Agent移动速度
-    
     // ===== 初始化方法 =====
     bool initWindow();
     void setupCallbacks();
@@ -64,19 +60,8 @@ private:
     void handleCursorPos(double xpos, double ypos);
     void handleScroll(double xoffset, double yoffset);
     
-    // 编辑和路径处理
-    void ResetState();
-    void handleEdit(int screenX, int screenY, EditObjectType type);
-    
-    // ===== 仿真管理 =====
-    void updateSimulation(float deltaTime);
-    void startSimulation();
-    
-    // ===== DWA路径规划 =====
-    void updateAgentPosition(float deltaTime);
-    
     // 坐标转换
-    Point screenToGrid(int screenX, int screenY);
+    Point screenToGrid(double screenX, double screenY);
     
     // ===== 静态回调函数 =====
     static void framebufferSizeCallback(GLFWwindow* window, int width, int height);
